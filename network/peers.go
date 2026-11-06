@@ -7,6 +7,7 @@ import (
 
 	//"math"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Arceliar/phony"
@@ -111,9 +112,10 @@ type peer struct {
 	order       uint64 // order in which peers were connected (relative uptime)
 	monitor     peerMonitor
 	writer      peerWriter
-	ready       bool      // is the writer ready for traffic?
-	srst        time.Time // sigReq send time
-	srrt        time.Time // sigRes receive time
+	ready       bool         // is the writer ready for traffic?
+	sigMu       sync.RWMutex // protects signal times read by Debug.GetPeers
+	srst        time.Time    // sigReq send time
+	srrt        time.Time    // sigRes receive time
 }
 
 type peerMonitor struct {
@@ -320,7 +322,9 @@ func (p *peer) _handleSigReq(bs []byte) error {
 
 func (p *peer) sendSigReq(from phony.Actor, req *routerSigReq) {
 	p.sendDirect(from, wireProtoSigReq, req, func() {
+		p.sigMu.Lock()
 		p.srst = time.Now()
+		p.sigMu.Unlock()
 	})
 }
 
@@ -332,8 +336,10 @@ func (p *peer) _handleSigRes(bs []byte) error {
 	if !res.check(p.peers.core.crypto.publicKey, p.key) {
 		return types.ErrBadMessage
 	}
+	p.sigMu.Lock()
 	p.srrt = time.Now()
 	rtt := p.srrt.Sub(p.srst)
+	p.sigMu.Unlock()
 	p.peers.core.router.handleResponse(p, p, res, rtt)
 	return nil
 }
